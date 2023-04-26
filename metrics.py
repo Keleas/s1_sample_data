@@ -51,7 +51,14 @@ def compute_ap(recall, precision):
     return ap
 
 
-def evaluate_map(inference_res, iou_threshold=0.5, score_threshold=0.05, num_cls=2):
+def evaluate_f_score(precision, recall, beta=1.0):
+    f_score = (1 + beta ** 2) * precision * recall / np.fmax(precision * (beta ** 2) + recall,
+                                                      np.finfo(np.float64).eps)
+
+    return f_score
+
+
+def evaluate_map(inference_res, iou_threshold=0.5, score_threshold=0.05, num_cls=1, beta=0.5):
     """
     # Arguments
         inference_res   : inference results for whole imageset List((target,prediction)),
@@ -80,7 +87,7 @@ def evaluate_map(inference_res, iou_threshold=0.5, score_threshold=0.05, num_cls
         iou_threshold   : The threshold used to consider when a detection is positive or negative.
         score_threshold : The score confidence threshold to use for detections.
         num_cls: The amount of classes in dataset.
-        return: mAP, mF1 per classes
+        return: mAP, mF05 per classes
     """
     per_cls_results = {}
     for cls in range(num_cls):
@@ -132,12 +139,12 @@ def evaluate_map(inference_res, iou_threshold=0.5, score_threshold=0.05, num_cls
             per_cls_results[cls] = [1., 1.]
             continue
 
-        # F1@IoU
+        # F_score@IoU
         plain_recall = np.sum(true_positives) / np.fmax(num_annotations, np.finfo(np.float64).eps)
         plain_precision = np.sum(true_positives) / np.fmax(np.sum(true_positives) + np.sum(false_positives),
                                                            np.finfo(np.float64).eps)
-        F1 = 2 * plain_precision * plain_recall / np.fmax(plain_precision + plain_recall,
-                                                          np.finfo(np.float64).eps)
+
+        f_score = evaluate_f_score(plain_precision, plain_recall, beta=beta)
 
         # compute false positives and true positives
         indices = np.argsort(scores)[::-1]
@@ -150,9 +157,22 @@ def evaluate_map(inference_res, iou_threshold=0.5, score_threshold=0.05, num_cls
         # compute average precision
         average_precision = compute_ap(recall, precision)
 
-        per_cls_results[cls] = [average_precision, F1]
+        per_cls_results[cls] = [average_precision, f_score]
 
     map = np.mean([per_cls_results[cls][0] for cls in range(num_cls)])
-    mF1 = np.mean([per_cls_results[cls][1] for cls in range(num_cls)])
+    mFscore = np.mean([per_cls_results[cls][1] for cls in range(num_cls)])
 
-    return map, mF1
+    return map, mFscore
+
+
+def evaluate(inference_res, iou_thr_min=0.5, iou_thr_max=0.95, iou_thr_step=0.05, score_threshold=0.05,
+             num_cls=1, beta=0.5):
+
+    map = []
+    mFscore = []
+    for thr in np.linspace(iou_thr_min, iou_thr_max, int((iou_thr_max - iou_thr_min) / iou_thr_step)):
+        _map, _mFscore = evaluate_map(inference_res, thr, score_threshold=score_threshold, num_cls=num_cls, beta=beta)
+        map.append(_map)
+        mFscore.append(_mFscore)
+
+    return np.mean(map), np.mean(mFscore)
